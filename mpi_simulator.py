@@ -1,5 +1,5 @@
-import typing
 import time
+import csv
 from multiprocessing import Process, Queue
 
 
@@ -7,54 +7,35 @@ number_of_processes_to_simulate = 4
 
 MPI_ANY_SOURCE = -1
 
-def mpi_application(
-        rank:int,
-        size:int,
-        send_f:typing.Callable[[typing.Any,int],None],
-        recv_f:typing.Callable[[int], typing.Any]
-    ):
-    # NOTE for the assignment you can not specify the reception of a message
-    # from a single source, you only need to receive from any source using:
+def calculate_absolute_difference(a, b):
+    return abs(a - b)
 
-    # data = recv_f(MPI_ANY_SOURCE)
-
-
-    # NOTE to send a message/data from a process to process with rank 2, you
-    # use:
-
-    # send_f(data,2)
-
-
-    # NOTE ensure the coordinator sends a message to inform each process to
-    # end and the coordinator should end as well.  If the application
-    # does not end, you likely messed this up.
-
-    # TODO implement your MPI application logic here using the parameters above
-    # instead of mpi4py
-    if rank == 0:
-        # TODO implement coordinator logic
-        send_f("hello", dest=1)
-        send_f("world", dest=2)
-        send_f("!", dest=3)
+def worker_logic(rank, recv_f, send_f):
+    while True:
+        data = recv_f(MPI_ANY_SOURCE)
+        if data == 'exit':
+            break
+        else:
+            result = calculate_absolute_difference(data)
+            send_f((rank, result), 0)
         
-        for _ in range(1, size):
-            print(recv_f(MPI_ANY_SOURCE))
-    else:
-        # TODO implement worker logic
-        d = recv_f(MPI_ANY_SOURCE)
-        print(f"{d} received by {rank}")
-        
-        send_f(f"Reply: I, process of rank {rank}, received {d}", dest=0)
-
-
-###############################################################################
-# This is the simulator code, do not adjust
+def coordinator_logic(size, send_f, recv_f):
+    # Generate inputs for the worker processes
+    inputs = [(1, 5), (10, 8), (3, 2), (6, 4)]
+    with open('results.csv', 'w', newline='') as csvfile:
+        result_writer = csv.writer(csvfile)
+        for i in inputs:
+            result = calculate_absolute_difference(i[0], i[1])
+            result_writer.writerow([result])
+    for i in range(1, size):
+        send_f('exit', i)
 
 def _run_app(process_rank, size, app_f, send_queues):
     send_f = _generate_send_f(process_rank, send_queues)
     recv_f = _generate_recv_f(process_rank, send_queues)
     
     app_f(process_rank, size, send_f, recv_f)
+
 
 def _generate_recv_f(process_rank, send_queues):
 
@@ -67,21 +48,17 @@ def _generate_recv_f(process_rank, send_queues):
 
 def _generate_send_f(process_rank, send_queues):
 
-    def send_F(data, dest):
+    def send_f(data, dest):
         send_queues[dest].put((process_rank,data))
-    return send_F
-
+    return send_f
 
 def _simulate_mpi(n:int, app_f):
-    
     send_queues = {}
-
     for process_rank in range(n):
         send_queues[process_rank] = Queue()
-    
+
     ps = []
     for process_rank in range(n):
-        
         p = Process(
             target=_run_app,
             args=(
@@ -96,8 +73,24 @@ def _simulate_mpi(n:int, app_f):
 
     for p in ps:
         p.join()
-###############################################################################
+        
+# MPI Application
+def mpi_application(rank, size, send_f, recv_f):
+    if rank == 0:
+        coordinator_logic(size, send_f, recv_f)
+    else:
+        worker_logic(rank, recv_f, send_f)
+
+
+# Unit test for the calculate_absolute_difference function
+def test_calculate_absolute_difference():
+    result = calculate_absolute_difference(5, 10)
+    print(f"Actual result: {result}")
+    assert result == 5
 
 
 if __name__ == "__main__":
+    test_calculate_absolute_difference()
+
+    # Running MPI simulation
     _simulate_mpi(number_of_processes_to_simulate, mpi_application)
